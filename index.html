@@ -43,6 +43,10 @@
   #tBtns { position: fixed; right: 18px; bottom: 22px; display: grid; grid-template-columns: repeat(2, 78px); gap: 10px; pointer-events: none; }
   .tBtn { pointer-events: auto; touch-action: none; height: 56px; border-radius: 12px; border: 2px solid rgba(255,255,255,0.3); background: rgba(20,18,10,0.55); color: #e9dd92; font: bold 14px "Courier New", monospace; letter-spacing: 1px; }
   .tBtn:active, .tBtn.on { background: rgba(216,200,115,0.6); color: #1a1708; }
+  #tPause { position: fixed; top: 10px; right: 12px; width: auto; height: 38px; padding: 0 14px; z-index: 47; }
+  /* on phones, lift the hotbar above the touch controls and make the slots tap-targets */
+  body.touch #hotbar { z-index: 46; bottom: 96px; gap: 10px; }
+  body.touch .slot { width: 58px; height: 58px; }
 
   /* ---- Overlay screens (title / win / lose) ---- */
   .screen {
@@ -177,6 +181,7 @@
 <div id="elevPrompt" class="hidden"></div>
 <!-- on-screen touch controls (mobile) -->
 <div id="touchUI" class="hidden">
+  <button id="tPause" class="tBtn">☰ MENU</button>
   <div id="tStick"><div id="tNub"></div></div>
   <div id="tBtns">
     <button id="tJump" class="tBtn">JUMP</button>
@@ -3004,7 +3009,11 @@ function setupPost() {
 function animate() {
   requestAnimationFrame(animate);
   const dt = Math.min(clock.getDelta(), 0.05);
-  if (IS_TOUCH) document.getElementById('touchUI').classList.toggle('hidden', !(playing && !paused && !spectating && !net.cinematic));
+  if (IS_TOUCH) {
+    const showCtl = playing && !paused && !spectating && !net.cinematic;
+    document.getElementById('touchUI').classList.toggle('hidden', !showCtl);
+    document.getElementById('hotbar').style.visibility = (playing && paused) ? 'hidden' : '';   // keep the floating hotbar out of the pause menu
+  }
 
   if (net.cinematic) {                       // escape ending cutscene — script the camera, skip all game logic
     updateEnding(dt);
@@ -3172,6 +3181,7 @@ function animate() {
       if (net.hotel) updateHotel();             // ride the elevators between floors
       if (net.cathedral) updateCathedralBoss(dt);   // the cross/Satan boss fight
       updateGun(dt);                            // carry the Tommy gun on the body (incl. the Satan fight)
+      updateTouchButtons();                     // keep mobile USE/DROP/FIRE buttons in sync with what's in hand / the boss fight
     }
   } else {
     vhsMat.uniforms.uGlitch.value = 0;
@@ -3549,7 +3559,7 @@ function setupTouch() {
     for (const t of e.changedTouches) {
       if (t.identifier === stickId) continue;
       const el = document.elementFromPoint(t.clientX, t.clientY);
-      if (el && (el.closest('#tStick') || el.closest('.tBtn') || el.closest('#hud'))) continue;
+      if (el && (el.closest('#tStick') || el.closest('.tBtn') || el.closest('#hud') || el.closest('#hotbar'))) continue;
       if (lookId === null) { lookId = t.identifier; lx = t.clientX; ly = t.clientY; }
     }
   }, { passive: false });
@@ -3576,6 +3586,24 @@ function setupTouch() {
   press('tDrop', () => dropItem());
   press('tView', () => { if (playing) view = (view + 1) % 3; });
   press('tFire', () => { firing = true; document.getElementById('tFire').classList.add('on'); }, () => { firing = false; document.getElementById('tFire').classList.remove('on'); });
+  press('tPause', () => { if (paused) resumeGame(); else openPause(); });   // mobile has no Esc key — this is the pause/menu button
+  updateTouchButtons();
+}
+
+// Hide touch buttons the player can't use right now: USE/DROP only with an item in hand, FIRE only with the tommy gun (or the Satan fight).
+let _touchBtnSig = '';
+function updateTouchButtons() {
+  if (!IS_TOUCH) return;
+  const boss = net.cathedral && net.boss && (net.boss.state === 'fight' || net.boss.state === 'regen');
+  const item = playing && !paused ? hotbar[activeSlot] : null;
+  const useable = item === 'destroyer' || item === 'apple' || item === 'bread';   // items the USE button actually does something with
+  const hasItem = !!item;                                                          // anything can be dropped
+  const gun = item === 'tommygun' || !!boss;
+  const sig = (useable ? 'u' : '') + (hasItem ? 'd' : '') + (gun ? 'g' : '');
+  if (sig === _touchBtnSig) return;                 // only touch the DOM when something actually changed
+  _touchBtnSig = sig;
+  const set = (id, show) => { const b = document.getElementById(id); if (b) b.style.display = show ? '' : 'none'; };
+  set('tUse', useable); set('tDrop', hasItem); set('tFire', gun);
 }
 
 // ---- CLIENT: connect to the host by room code ----
@@ -4024,8 +4052,12 @@ function renderHotbar() {
                    : '<div class="icon" style="background:' + it.color + ';box-shadow:0 0 8px ' + it.color + '"></div>';
     }
     d.innerHTML = '<span class="num">' + (i + 1) + '</span>' + (it ? icon + it.name : '');
+    const pick = () => { if (!playing) return; activeSlot = i; renderHotbar(); };
+    d.onclick = pick;                                                                    // desktop click
+    d.addEventListener('touchstart', e => { e.preventDefault(); e.stopPropagation(); pick(); }, { passive: false });   // mobile tap
     bar.appendChild(d);
   }
+  updateTouchButtons();
 }
 function addToInventory(type) {
   const slot = hotbar.indexOf(null);
