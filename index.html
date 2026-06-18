@@ -2900,7 +2900,7 @@ function endGame(won) {
   playing = false;
   vhsMat.uniforms.uGlitch.value = 0;
   if (audio) audio.staticGain.gain.value = 0;
-  document.exitPointerLock();
+  try { document.exitPointerLock(); } catch (e) {}   // not present on touch devices
   renderer.domElement.style.cursor = 'default';   // bring the cursor back on menus
   document.getElementById('hud').classList.add('hidden');
   document.getElementById('crosshair').classList.add('hidden');
