@@ -3515,8 +3515,13 @@ async function enableVoice() {
   net.micMuted = false; net.calledPeers = net.calledPeers || {};
   if (net.peer && !net._voiceWired) {                  // answer anyone who calls us
     net._voiceWired = true;
-    net.peer.on('call', call => { try { call.answer(net.micStream); } catch (e) {} call.on('stream', s => playRemote(call.peer, s)); call.on('close', () => removeRemote(call.peer)); call.on('error', () => removeRemote(call.peer)); });
+    net.peer.on('call', call => { try { call.answer(net.micStream); } catch (e) {} call.on('stream', s => playRemote(call.peer, s)); call.on('close', () => clearCall(call.peer)); call.on('error', () => clearCall(call.peer)); });
   }
+  if (!net._audioUnlockWired) {                         // keep retrying blocked audio on user gestures (iOS/Safari)
+    net._audioUnlockWired = true;
+    ['touchstart', 'pointerdown', 'click', 'keydown'].forEach(ev => document.addEventListener(ev, unlockRemoteAudio, { passive: true }));
+  }
+  if (!net._voiceRetry) net._voiceRetry = setInterval(() => { if (net.micStream) { connectVoiceToAll(); unlockRemoteAudio(); } }, 4000);   // self-heal dropped calls / blocked playback
   sendVoiceReady(); connectVoiceToAll();
   return true;
 }
@@ -3529,11 +3534,14 @@ function connectVoiceToAll() {
   net.calledPeers = net.calledPeers || {};
   const roster = currentRoster();
   for (const id in roster) {
-    if (id === net.myId || net.calledPeers[id] || net.myId >= id) continue;   // the lower peer-id makes the single call; the other answers
-    try { const call = net.peer.call(id, net.micStream); net.calledPeers[id] = call; call.on('stream', s => playRemote(id, s)); call.on('close', () => removeRemote(id)); call.on('error', () => removeRemote(id)); } catch (e) {}
+    if (id === net.myId || net.calledPeers[id]) continue;   // both peers call each other; whoever enabled voice last reaches the one already listening (playback de-dupes by peer id, so no echo)
+    try { const call = net.peer.call(id, net.micStream); net.calledPeers[id] = call; call.on('stream', s => playRemote(id, s)); call.on('close', () => clearCall(id)); call.on('error', () => clearCall(id)); } catch (e) {}
   }
 }
-function playRemote(id, stream) { net.audioElems = net.audioElems || {}; let a = net.audioElems[id]; if (!a) { a = new Audio(); a.autoplay = true; a.style.display = 'none'; document.body.appendChild(a); net.audioElems[id] = a; } try { a.srcObject = stream; a.volume = 1; a.play().catch(() => {}); } catch (e) {} }
+function clearCall(id) { if (net.calledPeers) delete net.calledPeers[id]; }   // allow a fresh call to re-establish; keep playing audio another connection may still feed
+function playRemote(id, stream) { net.audioElems = net.audioElems || {}; let a = net.audioElems[id]; if (!a) { a = new Audio(); a.autoplay = true; a.playsInline = true; a.setAttribute('playsinline', ''); a.style.display = 'none'; document.body.appendChild(a); net.audioElems[id] = a; } try { a.srcObject = stream; a.volume = 1; a.play().catch(() => {}); } catch (e) {} }
+// iOS/Safari block audio until a user gesture — retry playback on every tap/click/keypress so the friend who "can't hear" gets unblocked the moment they touch the screen.
+function unlockRemoteAudio() { if (net.audioElems) for (const id in net.audioElems) { const a = net.audioElems[id]; if (a) try { a.play().catch(() => {}); } catch (e) {} } }
 function removeRemote(id) { if (net.audioElems && net.audioElems[id]) { try { net.audioElems[id].srcObject = null; net.audioElems[id].remove(); } catch (e) {} delete net.audioElems[id]; } if (net.calledPeers) delete net.calledPeers[id]; }
 async function toggleMic() {
   if (!net.mode) { toast('Voice chat is for multiplayer.'); return; }
