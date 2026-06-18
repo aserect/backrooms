@@ -48,6 +48,15 @@
   body.touch #hotbar { z-index: 46; bottom: 14px; gap: 10px; }
   body.touch .slot { width: 54px; height: 54px; }
 
+  /* opening cutscene (intro video → camera glide) */
+  #introCut { position: fixed; inset: 0; z-index: 60; background: #000; display: flex; align-items: center; justify-content: center; }
+  #introVid { width: 100%; height: 100%; object-fit: contain; background: #000; }
+  #introSkip { position: fixed; bottom: 22px; right: 22px; z-index: 61; padding: 9px 18px; border-radius: 8px;
+    border: 1px solid rgba(255,255,255,0.4); background: rgba(0,0,0,0.55); color: #eee; font: 14px "Courier New", monospace; letter-spacing: 1px; cursor: pointer; }
+  #introSkip:hover { background: rgba(255,255,255,0.2); }
+  #introTap { position: fixed; left: 50%; top: 50%; transform: translate(-50%,-50%); z-index: 61; padding: 16px 30px; border-radius: 12px;
+    border: 2px solid #d8c873; background: rgba(20,18,10,0.85); color: #ffe9a8; font: bold 20px "Courier New", monospace; letter-spacing: 2px; cursor: pointer; }
+
   /* force landscape on phones: cover the screen with a "rotate" nag while held in portrait */
   #rotateNag { display: none; }
   @media (orientation: portrait) {
@@ -205,6 +214,12 @@
 <div id="bossbar" class="hidden"><div id="bossLabel">SATAN</div><div id="bossBarOuter"><div id="bossBarFill"></div></div></div>
 <div id="elevPrompt" class="hidden"></div>
 <!-- on-screen touch controls (mobile) -->
+<div id="introCut" class="hidden">
+  <video id="introVid" playsinline preload="auto" src="intro.mp4"></video>
+  <button id="introTap" class="hidden">▶ Tap to start</button>
+  <button id="introSkip">Skip ▸</button>
+</div>
+
 <div id="rotateNag"><div class="ico">📱</div>Please rotate your device<br>This game plays in landscape.</div>
 
 <div id="touchUI" class="hidden">
@@ -2786,7 +2801,7 @@ async function beginGame(seed, level) {
   net.seed = seed >>> 0;
   net.level = level || 1;
   net.advancing = false;        // ready to detect the next exit
-  net.bossActive = false; net.boss = null; firing = false; net.bossArena = false; net.devils = []; net.fireballs = []; net.cinematic = null; net.angelHp = 70; net._gunCd = 0; stopBossMusic();   // clear any cathedral boss state
+  net.bossActive = false; net.boss = null; firing = false; net.bossArena = false; net.devils = []; net.fireballs = []; net.cinematic = null; net.introActive = false; net.introPhase = null; net.angelHp = 70; net._gunCd = 0; stopBossMusic();   // clear any cathedral boss state
   net.inElevator = null; document.getElementById('elevPrompt').classList.add('hidden');
   RNG = mulberry32(net.seed);   // seed the world generator so all peers match
   net.hallway = (net.level === 9);    // level 9 = the red chase hallway (swapped with pipe dreams)
@@ -3037,13 +3052,21 @@ function animate() {
   requestAnimationFrame(animate);
   const dt = Math.min(clock.getDelta(), 0.05);
   if (IS_TOUCH) {
-    const showCtl = playing && !paused && !spectating && !net.cinematic;
+    const showCtl = playing && !paused && !spectating && !net.cinematic && !net.introActive;
     document.getElementById('touchUI').classList.toggle('hidden', !showCtl);
     document.getElementById('hotbar').style.visibility = (playing && paused) ? 'hidden' : '';   // keep the floating hotbar out of the pause menu
   }
 
   if (net.cinematic) {                       // escape ending cutscene — script the camera, skip all game logic
     updateEnding(dt);
+    vhsMat.uniforms.uTime.value = performance.now() / 1000; vhsMat.uniforms.uTwist.value = 0;
+    if (settings.vhs) { renderer.setRenderTarget(rt); renderer.render(scene, camera); renderer.setRenderTarget(null); renderer.render(postScene, postCamera); }
+    else { renderer.setRenderTarget(null); renderer.render(scene, camera); }
+    return;
+  }
+
+  if (net.introActive) {                     // opening cutscene — video plays, then the camera glides in; no player control yet
+    updateIntro(dt);
     vhsMat.uniforms.uTime.value = performance.now() / 1000; vhsMat.uniforms.uTwist.value = 0;
     if (settings.vhs) { renderer.setRenderTarget(rt); renderer.render(scene, camera); renderer.setRenderTarget(null); renderer.render(postScene, postCamera); }
     else { renderer.setRenderTarget(null); renderer.render(scene, camera); }
@@ -3392,7 +3415,7 @@ function onHostData(conn, d) {
   }
 }
 function broadcast(msg) { net.conns.forEach(c => { try { if (c.open) c.send(msg); } catch (e) {} }); }
-function hostStart() { lockPointer(); const seed = randSeed(); net.seed = seed; broadcast({ t: 'start', seed, level: 1 }); beginGame(seed, 1); }
+async function hostStart() { const seed = randSeed(); net.seed = seed; broadcast({ t: 'start', seed, level: 1 }); await beginGame(seed, 1); playIntro(); }
 
 // reaching the green EXIT advances EVERYONE to the next floor
 function onReachExit() {
@@ -3452,6 +3475,58 @@ function buildForest() {
   const av = makeAvatar(net.mySkin || 'red'); av.position.set(0, -4, -4); scene.add(av); scene.userData.endAvatar = av;   // YOUR character (for the launch)
   const fallen = makeFallenAvatar(net.mySkin || 'red'); fallen.visible = false; scene.add(fallen); scene.userData.fallenAvatar = fallen;   // the collapsed pose (for the landing)
 }
+// ---- OPENING CUTSCENE (intro video → camera glide down the hall → hand over control) ----
+function playIntro() {
+  net.introActive = true; net.introPhase = 'video'; net.introT = 0;
+  ['hud', 'crosshair', 'detector', 'facemeter', 'hotbar', 'stamina', 'bossbar', 'elevPrompt', 'objective', 'micBtn'].forEach(id => { const e = document.getElementById(id); if (e) e.classList.add('hidden'); });
+  if (IS_TOUCH) document.getElementById('touchUI').classList.add('hidden');
+  try { document.exitPointerLock(); } catch (e) {}            // don't let the mouse spin the camera during the cutscene
+  const cut = document.getElementById('introCut'); cut.classList.remove('hidden');
+  const v = document.getElementById('introVid'), tap = document.getElementById('introTap');
+  tap.classList.add('hidden');
+  v.muted = false; v.currentTime = 0;
+  v.onended = endIntroVideo;
+  v.onerror = endIntroVideo;                                 // video missing/unsupported → skip straight to the glide
+  const p = v.play();
+  if (p && p.catch) p.catch(() => { tap.classList.remove('hidden'); });   // autoplay-with-sound blocked (e.g. a multiplayer client) → wait for a tap
+}
+function endIntroVideo() {
+  const v = document.getElementById('introVid'); try { v.pause(); } catch (e) {}
+  document.getElementById('introCut').classList.add('hidden');               // reveal the 3D scene for the glide
+  const fwd = new THREE.Vector3(-Math.sin(yaw), 0, -Math.cos(yaw));
+  let back = 0; for (let d = 0.5; d <= 6; d += 0.5) { if (blocked(player.x - fwd.x * d, player.z - fwd.z * d)) break; back = d; }   // how far we can pull the camera back without clipping a wall
+  const gy = (net.outdoor ? heightAt(player.x, player.z) : (net.poolrooms || net.stairwell ? feetY : 0));
+  net.introGlide = {
+    start: new THREE.Vector3(player.x - fwd.x * back, gy + EYE_H + 6.2, player.z - fwd.z * back),   // up high & a little behind
+    end:   new THREE.Vector3(player.x, gy + EYE_H, player.z),                                       // settles exactly into the player's eye
+    look:  new THREE.Vector3(player.x + fwd.x * 3, gy + EYE_H, player.z + fwd.z * 3)
+  };
+  net.introPhase = 'glide'; net.introT = 0;
+}
+function updateIntro(dt) {
+  if (net.introPhase === 'video') return;                                    // the <video> drives this phase; camera waits
+  if (net.introPhase === 'glide') {
+    net.introT += dt;
+    const DUR = 3.6, t = Math.min(1, net.introT / DUR), e = t * t * (3 - 2 * t);   // smoothstep ease
+    const G = net.introGlide;
+    camera.position.lerpVectors(G.start, G.end, e);
+    camera.lookAt(G.look);
+    if (t >= 1) finishIntro();
+  }
+}
+function finishIntro() {
+  net.introActive = false; net.introPhase = null; net.introGlide = null;
+  document.getElementById('introCut').classList.add('hidden');
+  document.getElementById('crosshair').classList.remove('hidden');
+  document.getElementById('detector').classList.remove('hidden');
+  document.getElementById('facemeter').classList.remove('hidden');
+  document.getElementById('hotbar').classList.remove('hidden');
+  document.getElementById('stamina').classList.toggle('hidden', net.hallway);
+  const obj = document.getElementById('objective'); if (obj) obj.classList.remove('hidden');
+  updateMicBtn();
+  updateCamera();
+  lockPointer();
+}
 function playEnding() {
   unlockAch('escape');
   if (net.mode) unlockAch('teamwork');   // beat it in multiplayer
@@ -3487,7 +3562,8 @@ function updateEnding(dt) {
   camera.lookAt(-0.3, 0.35, 2.6);                            // ground-level side view of the fallen character
 }
 function backToMenu() {
-  playing = false; spectating = false; paused = false; net.cinematic = null;
+  playing = false; spectating = false; paused = false; net.cinematic = null; net.introActive = false; net.introPhase = null;
+  document.getElementById('introCut').classList.add('hidden');
   try { document.exitPointerLock(); } catch (e) {}
   renderer.domElement.style.cursor = 'default';
   vhsMat.uniforms.uGlitch.value = 0;
@@ -3590,7 +3666,7 @@ function setupTouch() {
   let stickId = null, scx = 0, scy = 0, lookId = null, lx = 0, ly = 0; const R = 52;
   stick.addEventListener('touchstart', e => { e.preventDefault(); const t = e.changedTouches[0]; stickId = t.identifier; const r = stick.getBoundingClientRect(); scx = r.left + r.width / 2; scy = r.top + r.height / 2; }, { passive: false });
   document.addEventListener('touchstart', e => {
-    if (!playing || paused || spectating || net.cinematic) return;
+    if (!playing || paused || spectating || net.cinematic || net.introActive) return;
     for (const t of e.changedTouches) {
       if (t.identifier === stickId) continue;
       const el = document.elementFromPoint(t.clientX, t.clientY);
@@ -3662,7 +3738,7 @@ function joinGame(code) {
 }
 function onClientData(d) {
   if (d.t === 'roster') { net.rosterCache = d.players; updatePlayerList(); if (playing) refreshAvatars(); }
-  else if (d.t === 'start') { net.seed = d.seed; beginGame(d.seed, d.level || 1); }
+  else if (d.t === 'start') { net.seed = d.seed; beginGame(d.seed, d.level || 1).then(() => playIntro()); }
   else if (d.t === 'snap') {
     net.snap = d.players; net.monsterTarget.set(d.mx, 0, d.mz); net.monsterActive = !!d.mAct;
     if (d.mim) { net.mimic.on = true; net.mimic.x = d.mim.x; net.mimic.z = d.mim.z; net.mimic.gy = d.mim.gy; net.mimic.nick = d.mim.n; net.mimic.skin = d.mim.s; net.mimic.burn = d.mim.b || 0; }
@@ -4378,7 +4454,7 @@ function init() {
     locked = nowLocked;
   });
   document.addEventListener('mousemove', e => {
-    if (!locked || !playing || net.chatOpen) return;
+    if (!locked || !playing || net.chatOpen || net.introActive) return;
     yaw   -= e.movementX * MOUSE_SENS * settings.sens;
     pitch -= e.movementY * MOUSE_SENS * settings.sens;
     pitch = Math.max(-1.5, Math.min(1.5, pitch)); // don't let you flip upside down (updateCamera applies it)
@@ -4390,7 +4466,7 @@ function init() {
 
   // buttons
   // main menu
-  document.getElementById('playBtn').onclick = () => { net.mode = null; net.myNick = 'You'; lockPointer(); beginGame(randSeed(), 1); };
+  document.getElementById('playBtn').onclick = async () => { net.mode = null; net.myNick = 'You'; await beginGame(randSeed(), 1); playIntro(); };
   document.getElementById('mpBtn').onclick = () => { document.getElementById('menuRoot').classList.add('hidden'); document.getElementById('mpSetup').classList.remove('hidden'); };
   document.getElementById('backBtn').onclick = () => { document.getElementById('mpSetup').classList.add('hidden'); document.getElementById('menuRoot').classList.remove('hidden'); netStatus(''); };
   // settings & credits panels
@@ -4420,6 +4496,8 @@ function init() {
   document.getElementById('leaveBtn').onclick = () => location.reload();
   document.getElementById('lobbyChat').addEventListener('keydown', e => { if (e.key === 'Enter') { sendChat(e.target.value); e.target.value = ''; } });
   document.getElementById('micBtn').onclick = () => toggleMic();
+  document.getElementById('introSkip').onclick = () => { if (net.introPhase === 'video') endIntroVideo(); else finishIntro(); };
+  document.getElementById('introTap').onclick = () => { const v = document.getElementById('introVid'); document.getElementById('introTap').classList.add('hidden'); const p = v.play(); if (p && p.catch) p.catch(() => {}); };
   document.getElementById('resumeBtn').onclick = resumeGame;
   document.getElementById('menuBtn').onclick = () => {
     if (net.mode === 'host') { try { broadcast({ t: 'hostleft' }); } catch (e) {} setTimeout(() => location.reload(), 200); }   // host leaving ends the game for everyone
