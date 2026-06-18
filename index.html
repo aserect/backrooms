@@ -4319,7 +4319,7 @@ function init() {
   addEventListener('mousedown', e => { if (e.button === 0) firing = true; });
   addEventListener('mouseup',   e => { if (e.button === 0) firing = false; });
   // clicking the game re-grabs the mouse if you pressed Esc
-  canvas.addEventListener('click', () => { if (playing && !paused && !locked) canvas.requestPointerLock(); });
+  canvas.addEventListener('click', () => { if (playing && !paused && !locked && canvas.requestPointerLock) canvas.requestPointerLock(); });   // pointer lock is mouse-only; absent on mobile/touch
 
   // buttons
   // main menu
