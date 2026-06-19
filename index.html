@@ -2,7 +2,10 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="mobile-web-app-capable" content="yes" />
 <title>The Backrooms</title>
 <style>
   html, body { margin: 0; height: 100%; overflow: hidden; background: #000; font-family: "Courier New", monospace; }
@@ -347,6 +350,7 @@
   <div class="setRow"><label>Field of view</label><input type="range" id="setFov" min="60" max="100" step="1"><span id="setFovV"></span></div>
   <div class="setRow"><label>Volume</label><input type="range" id="setVol" min="0" max="1" step="0.05"><span id="setVolV"></span></div>
   <div class="setRow"><label>VHS filter</label><input type="checkbox" id="setVhs"></div>
+  <div class="setRow"><label>⛶ Fullscreen</label><button id="setFs" style="padding:6px 16px; border-radius:6px; border:1px solid #888; background:#2a2614; color:#e9dd92; cursor:pointer; font:13px 'Courier New',monospace;">Toggle</button></div>
   <div class="setRow"><label>🎙 Voice input (mic)</label><select id="setMic" style="flex:1; min-width:160px; background:#1a1810; color:#ddd; border:1px solid #555; padding:4px; border-radius:4px;"><option value="">Default microphone</option></select></div>
   <div style="font-size:11px; opacity:0.6; margin:-4px 0 6px; max-width:360px;">Pick the mic you connected. Press M in a multiplayer game to talk.</div>
   <button id="setBack" class="texbtn" style="margin-top:14px;">Back</button>
@@ -446,6 +450,20 @@ let firing = false;                      // left mouse held → fire the tommy g
 let hasGun = false;                       // unlocked by beating Satan; persists across games (localStorage)
 let touchMove = { x: 0, y: 0 };           // mobile joystick vector
 const IS_TOUCH = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
+const IS_IPHONE = /iP(hone|od)/.test(navigator.platform) || (/iPhone/.test(navigator.userAgent));
+// ---- fullscreen (gives mobile players the whole screen instead of the tiny in-browser view) ----
+function fsElement() { return document.fullscreenElement || document.webkitFullscreenElement || null; }
+function enterFullscreen() {
+  const el = document.documentElement;
+  const fn = el.requestFullscreen || el.webkitRequestFullscreen || el.webkitRequestFullScreen;
+  if (fn) { try { const p = fn.call(el); if (p && p.catch) p.catch(() => {}); } catch (e) {} return true; }
+  return false;   // iPhone Safari can't fullscreen a webpage
+}
+function exitFullscreen() { const fn = document.exitFullscreen || document.webkitExitFullscreen; if (fn) { try { fn.call(document); } catch (e) {} } }
+function toggleFullscreen() {
+  if (fsElement()) { exitFullscreen(); return; }
+  if (!enterFullscreen() && IS_IPHONE) toast('iPhone: tap Share ⬆ then "Add to Home Screen" to play fullscreen.');
+}
 let stamina = 100, staminaDelay = 0;   // sprint stamina (0–100) + delay before it regenerates
 const clock = new THREE.Clock();
 let audio;                  // WebAudio bundle (created on first play)
@@ -3415,7 +3433,7 @@ function onHostData(conn, d) {
   }
 }
 function broadcast(msg) { net.conns.forEach(c => { try { if (c.open) c.send(msg); } catch (e) {} }); }
-async function hostStart() { const seed = randSeed(); net.seed = seed; broadcast({ t: 'start', seed, level: 1 }); await beginGame(seed, 1); playIntro(); }
+async function hostStart() { if (IS_TOUCH) enterFullscreen(); const seed = randSeed(); net.seed = seed; broadcast({ t: 'start', seed, level: 1 }); await beginGame(seed, 1); playIntro(); }
 
 // reaching the green EXIT advances EVERYONE to the next floor
 function onReachExit() {
@@ -4466,7 +4484,7 @@ function init() {
 
   // buttons
   // main menu
-  document.getElementById('playBtn').onclick = async () => { net.mode = null; net.myNick = 'You'; await beginGame(randSeed(), 1); playIntro(); };
+  document.getElementById('playBtn').onclick = async () => { if (IS_TOUCH) enterFullscreen(); net.mode = null; net.myNick = 'You'; await beginGame(randSeed(), 1); playIntro(); };
   document.getElementById('mpBtn').onclick = () => { document.getElementById('menuRoot').classList.add('hidden'); document.getElementById('mpSetup').classList.remove('hidden'); };
   document.getElementById('backBtn').onclick = () => { document.getElementById('mpSetup').classList.add('hidden'); document.getElementById('menuRoot').classList.remove('hidden'); netStatus(''); };
   // settings & credits panels
@@ -4488,10 +4506,11 @@ function init() {
   document.getElementById('setFov').addEventListener('input', e => { settings.fov = +e.target.value; document.getElementById('setFovV').textContent = settings.fov; applySettings(); saveSettings(); });
   document.getElementById('setVol').addEventListener('input', e => { settings.volume = +e.target.value; document.getElementById('setVolV').textContent = Math.round(settings.volume * 100) + '%'; applySettings(); saveSettings(); });
   document.getElementById('setVhs').addEventListener('change', e => { settings.vhs = e.target.checked; saveSettings(); });
+  document.getElementById('setFs').onclick = () => toggleFullscreen();
   // multiplayer / lobby buttons
   document.getElementById('hostBtn').onclick = () => { if (requireNick()) hostGame(); };
   document.getElementById('joinBtn').onclick = () => { document.getElementById('joinBox').classList.toggle('hidden'); };
-  document.getElementById('connectBtn').onclick = () => { if (requireNick()) joinGame(document.getElementById('codeInput').value.trim()); };
+  document.getElementById('connectBtn').onclick = () => { if (requireNick()) { if (IS_TOUCH) enterFullscreen(); joinGame(document.getElementById('codeInput').value.trim()); } };
   document.getElementById('startMpBtn').onclick = hostStart;
   document.getElementById('leaveBtn').onclick = () => location.reload();
   document.getElementById('lobbyChat').addEventListener('keydown', e => { if (e.key === 'Enter') { sendChat(e.target.value); e.target.value = ''; } });
