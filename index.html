@@ -320,6 +320,7 @@
     <p style="opacity:0.7; margin-top:0;">Share this code with friends so they can join.</p>
     <div id="playerList"></div>
     <button id="startMpBtn" class="hidden">START GAME</button>
+    <button id="lobbyLevelsBtn" class="texbtn hidden">LEVEL SELECT</button>
     <p id="waitMsg" class="hidden" style="opacity:0.8;">Waiting for the host to start…</p>
     <div style="margin-top:10px;">
       <input id="lobbyChat" maxlength="120" placeholder="Chat to the room…" autocomplete="off" style="width:300px;" />
@@ -1765,24 +1766,19 @@ function updateCathedralBoss(dt) {
     if (B.regenT >= 1.8) {
       B.phase++; B.state = 'fight'; B.hp = B.max; B.fire = 1.0;
       if (B.phase >= 2) for (let i = 0; i < 3; i++) spawnDevil();   // a fixed 3 devils per phase, no endless spawning
-      toast(B.phase === 2 ? 'He summons the legions!' : 'He hunts you himself!');
+      toast(B.phase === 2 ? 'He summons the legions!' : 'His full fury — fire and legions!');
     }
     return;
   }
   if (B.state === 'fight') {
     satan.userData.t += dt;
-    const tox = player.x - satan.position.x, toz = player.z - satan.position.z, dd = Math.hypot(tox, toz);
-    satan.rotation.y = Math.atan2(tox, toz);
-    if (B.phase < 3) {
-      // stationary, sways side to side
-      satan.position.x = anchor.x; satan.position.z = anchor.z + Math.sin(satan.userData.t * 0.8) * 9;
-      satan.position.y = Math.abs(Math.sin(satan.userData.t * 2)) * 0.25;
-    } else {
-      // phase 3: chases you
-      satan.position.y = Math.abs(Math.sin(satan.userData.t * 3)) * 0.3;
-      if (dd > 2.4) { satan.position.x += (tox / dd) * 4.0 * dt; satan.position.z += (toz / dd) * 4.0 * dt; }
-      else { caught('Satan dragged you into the pit.'); return; }
-    }
+    const tox = player.x - satan.position.x, toz = player.z - satan.position.z;
+    satan.rotation.y = Math.atan2(tox, toz);   // always faces you, but never leaves the altar
+    // every phase: stays at the altar and sways side to side (no chasing — phase 3 just sways wider/faster and leans on fireballs + devils)
+    const sway = B.phase >= 3 ? 11 : 9, swaySpeed = B.phase >= 3 ? 1.15 : 0.8;
+    satan.position.x = anchor.x;
+    satan.position.z = anchor.z + Math.sin(satan.userData.t * swaySpeed) * sway;
+    satan.position.y = Math.abs(Math.sin(satan.userData.t * (B.phase >= 3 ? 3 : 2))) * 0.28;
     if (satan.userData.glow) satan.userData.glow.intensity = Math.max(1.4, satan.userData.glow.intensity - dt * 6) + Math.sin(satan.userData.t * 9) * 0.3;
     // attacks
     B.fire -= dt;
@@ -3368,6 +3364,7 @@ function showLobby(isHost) {
   document.getElementById('setup').classList.add('hidden');
   document.getElementById('lobby').classList.remove('hidden');
   document.getElementById('startMpBtn').classList.toggle('hidden', !isHost);
+  document.getElementById('lobbyLevelsBtn').classList.toggle('hidden', !isHost);   // only the host chooses the floor
   document.getElementById('waitMsg').classList.toggle('hidden', isHost);
 }
 function currentRoster() {
@@ -3672,8 +3669,23 @@ function renderLevelSelect() {
     const open = !!unlockedLevels[n];
     const card = document.createElement('div'); card.className = 'lvlCard' + (open ? '' : ' locked');
     card.innerHTML = `<b>${open ? '' : '🔒 '}LEVEL ${levelLabel(n)}</b><br>${open ? LEVEL_NAMES[n] : 'Reach it to unlock'}`;
-    if (open) card.onclick = () => { document.getElementById('title').classList.add('hidden'); document.getElementById('levelSelect').classList.add('hidden'); document.getElementById('menuRoot').classList.remove('hidden'); net.mode = null; net.myNick = 'You'; lockPointer(); beginGame(randSeed(), n); };
+    if (open) card.onclick = () => startSelectedLevel(n);
     grid.appendChild(card);
+  }
+}
+// start a hand-picked level — from the main menu (solo) or from the multiplayer lobby (host starts everyone there)
+function startSelectedLevel(n) {
+  if (IS_TOUCH) enterFullscreen();
+  net.lvlFromLobby = false;
+  ['title', 'levelSelect', 'lobby'].forEach(id => document.getElementById(id).classList.add('hidden'));
+  document.getElementById('menuRoot').classList.remove('hidden');   // reset setup's default panel for next time
+  if (net.mode === 'host') {                       // multiplayer: send everyone to this floor
+    const seed = randSeed(); net.seed = seed;
+    broadcast({ t: 'start', seed, level: n });
+    beginGame(seed, n).then(() => { if (n === 1) playIntro(); });
+  } else {                                          // solo
+    net.mode = null; net.myNick = net.myNick || 'You';
+    beginGame(randSeed(), n).then(() => { if (n === 1) playIntro(); });
   }
 }
 // ---- mobile touch controls: left joystick to move, right side to look, buttons for actions ----
@@ -3756,7 +3768,7 @@ function joinGame(code) {
 }
 function onClientData(d) {
   if (d.t === 'roster') { net.rosterCache = d.players; updatePlayerList(); if (playing) refreshAvatars(); }
-  else if (d.t === 'start') { net.seed = d.seed; beginGame(d.seed, d.level || 1).then(() => playIntro()); }
+  else if (d.t === 'start') { net.seed = d.seed; const lvl = d.level || 1; beginGame(d.seed, lvl).then(() => { if (lvl === 1) playIntro(); }); }   // intro only at the start of the game, not on every floor
   else if (d.t === 'snap') {
     net.snap = d.players; net.monsterTarget.set(d.mx, 0, d.mz); net.monsterActive = !!d.mAct;
     if (d.mim) { net.mimic.on = true; net.mimic.x = d.mim.x; net.mimic.z = d.mim.z; net.mimic.gy = d.mim.gy; net.mimic.nick = d.mim.n; net.mimic.skin = d.mim.s; net.mimic.burn = d.mim.b || 0; }
@@ -4496,9 +4508,27 @@ function init() {
   document.getElementById('pauseSettingsBtn').onclick = () => openSettings();
   document.getElementById('setMic').addEventListener('change', e => setMicDevice(e.target.value));
   document.getElementById('credBack').onclick = () => backToMenu('credits');
-  document.getElementById('levelsBtn').onclick = () => { renderLevelSelect(); showPanel('levelSelect'); };
+  document.getElementById('levelsBtn').onclick = () => { net.lvlFromLobby = false; renderLevelSelect(); showPanel('levelSelect'); };
   document.getElementById('achBtn').onclick = () => { renderAchievements(); showPanel('achievements'); };
-  document.getElementById('lvlBack').onclick = () => backToMenu('levelSelect');
+  // host opens level select from the multiplayer lobby
+  document.getElementById('lobbyLevelsBtn').onclick = () => {
+    net.lvlFromLobby = true; renderLevelSelect();
+    document.getElementById('lobby').classList.add('hidden');
+    document.getElementById('title').classList.remove('hidden');
+    document.getElementById('setup').classList.remove('hidden');
+    document.getElementById('menuRoot').classList.add('hidden');
+    document.getElementById('levelSelect').classList.remove('hidden');
+  };
+  document.getElementById('lvlBack').onclick = () => {
+    if (net.lvlFromLobby) {                          // came from the lobby → go back to the lobby
+      net.lvlFromLobby = false;
+      document.getElementById('levelSelect').classList.add('hidden');
+      document.getElementById('menuRoot').classList.remove('hidden');
+      document.getElementById('title').classList.add('hidden');
+      document.getElementById('setup').classList.add('hidden');
+      document.getElementById('lobby').classList.remove('hidden');
+    } else backToMenu('levelSelect');
+  };
   document.getElementById('achBack').onclick = () => backToMenu('achievements');
   // main-menu background = the level-1 wall, behind a dark overlay
   { const tt = document.getElementById('title'); tt.style.backgroundImage = `linear-gradient(rgba(8,7,3,0.74), rgba(8,7,3,0.9)), url(${WALL_TEXTURE_DATAURL})`; tt.style.backgroundSize = 'auto, 150px 150px'; tt.style.backgroundRepeat = 'no-repeat, repeat'; }
