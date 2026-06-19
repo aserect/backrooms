@@ -262,7 +262,6 @@
       </div>
       <div class="lobbyBtns">
         <button id="settingsBtn" class="texbtn">SETTINGS</button>
-        <button id="creditsBtn" class="texbtn">CREDITS</button>
       </div>
     </div>
 
@@ -281,20 +280,7 @@
       <button id="achBack" class="texbtn" style="margin-top:14px;">Back</button>
     </div>
 
-    <!-- settings -->
-    <!-- credits -->
-    <div id="credits" class="hidden">
-      <h2 style="letter-spacing:3px; margin:0 0 12px;">CREDITS</h2>
-      <div style="font-size:14px; line-height:1.9; max-width:560px; text-align:left; margin:0 auto;">
-        <b>3D models</b> — via <a href="https://poly.pizza" target="_blank" style="color:#9fe87a">Poly Pizza</a>:<br>
-        &nbsp;&nbsp;• Office Chair &amp; Desk — <b>Quaternius</b> (CC0)<br>
-        &nbsp;&nbsp;• Stop Sign — <b>CreativeTrio</b> (CC-BY)<br><br>
-        <b>Engine &amp; tech:</b> three.js (3D rendering), PeerJS (multiplayer)<br><br>
-        <b>Wall texture:</b> your own image<br>
-        <b>Everything else</b> — houses, terrain, the entities, levels, sounds — was custom-built in code.
-      </div>
-      <button id="credBack" class="texbtn" style="margin-top:16px;">Back</button>
-    </div>
+    <!-- settings is an overlay (opened from menu + pause) -->
 
     <!-- multiplayer setup: nickname + skin, then host/join -->
     <div id="mpSetup" class="hidden">
@@ -4497,17 +4483,16 @@ function init() {
   // buttons
   // main menu
   document.getElementById('playBtn').onclick = async () => { if (IS_TOUCH) enterFullscreen(); net.mode = null; net.myNick = 'You'; await beginGame(randSeed(), 1); playIntro(); };
-  document.getElementById('mpBtn').onclick = () => { document.getElementById('menuRoot').classList.add('hidden'); document.getElementById('mpSetup').classList.remove('hidden'); };
-  document.getElementById('backBtn').onclick = () => { document.getElementById('mpSetup').classList.add('hidden'); document.getElementById('menuRoot').classList.remove('hidden'); netStatus(''); };
-  // settings & credits panels
-  const showPanel = (id) => { document.getElementById('menuRoot').classList.add('hidden'); document.getElementById(id).classList.remove('hidden'); };
-  const backToMenu = (id) => { document.getElementById(id).classList.add('hidden'); document.getElementById('menuRoot').classList.remove('hidden'); };
+  document.getElementById('mpBtn').onclick = () => showPanel('mpSetup');
+  document.getElementById('backBtn').onclick = () => { backToMenu(); netStatus(''); };
+  // menu panels: only ever show ONE at a time (hide every other so none linger)
+  const SETUP_PANELS = ['menuRoot', 'levelSelect', 'achievements', 'mpSetup'];
+  const showPanel = (id) => SETUP_PANELS.forEach(p => document.getElementById(p).classList.toggle('hidden', p !== id));
+  const backToMenu = () => showPanel('menuRoot');
   document.getElementById('settingsBtn').onclick = () => openSettings();
-  document.getElementById('creditsBtn').onclick = () => showPanel('credits');
   document.getElementById('setBack').onclick = () => closeSettings();
   document.getElementById('pauseSettingsBtn').onclick = () => openSettings();
   document.getElementById('setMic').addEventListener('change', e => setMicDevice(e.target.value));
-  document.getElementById('credBack').onclick = () => backToMenu('credits');
   document.getElementById('levelsBtn').onclick = () => { net.lvlFromLobby = false; renderLevelSelect(); showPanel('levelSelect'); };
   document.getElementById('achBtn').onclick = () => { renderAchievements(); showPanel('achievements'); };
   // host opens level select from the multiplayer lobby
@@ -4516,14 +4501,12 @@ function init() {
     document.getElementById('lobby').classList.add('hidden');
     document.getElementById('title').classList.remove('hidden');
     document.getElementById('setup').classList.remove('hidden');
-    document.getElementById('menuRoot').classList.add('hidden');
-    document.getElementById('levelSelect').classList.remove('hidden');
+    showPanel('levelSelect');                         // hides menuRoot/mpSetup so nothing stacks behind it
   };
   document.getElementById('lvlBack').onclick = () => {
     if (net.lvlFromLobby) {                          // came from the lobby → go back to the lobby (which lives inside #title)
       net.lvlFromLobby = false;
-      document.getElementById('levelSelect').classList.add('hidden');
-      document.getElementById('menuRoot').classList.remove('hidden');   // restore setup's default panel for next time
+      showPanel('menuRoot');                          // reset panels so the main menu is clean next time
       document.getElementById('setup').classList.add('hidden');
       document.getElementById('title').classList.remove('hidden');      // keep the title visible — the lobby is its child
       document.getElementById('lobby').classList.remove('hidden');
